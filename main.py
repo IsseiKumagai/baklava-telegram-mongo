@@ -9,8 +9,10 @@ import logging
 import schedule
 import requests
 import random
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pymongo import MongoClient
+from datetime import datetime
+
 #brew tap mongodb/brew
 #brew update
 #brew install mongodb-community@4.2
@@ -44,6 +46,11 @@ class Baklava:
         self.web3 = Web3(Web3.HTTPProvider(Baklava.AVALANCHE_RPC))
         self.USB_liquidity_pool_contract = self.create_USB_liquidity_pool_contract()
         self.USB_swap_locker_contract = self.create_USB_swap_locker_contract()
+        self.__non_vested_funds_total = Counter()
+        self.__vested_funds_total = Counter()
+        self.__stable_coin_distribution_schedule = dict()
+        self.__user_vesting_schedule = dict()
+        self.time_last_refreshed = None
 
     def is_connected_to_avax_rpc(self):
         return self.web3.isConnected()
@@ -90,7 +97,7 @@ class Baklava:
                 address_stable_coin, vesting_days, swap_enabled = self.USB_liquidity_pool_contract.functions.getUSPeggedCoin(stable_coin_index).call()
                 # (addrress of stable coin, 21 days, boolean)
                 stable_coin[address_stable_coin] = [vesting_days, swap_enabled]
-            #print(stable_coin)
+            print(stable_coin)
             return stable_coin
         except Exception as e:
             logging.error(e)
@@ -104,19 +111,20 @@ class Baklava:
                 user_addresses[stable_coin_address] = set(
                     self.USB_swap_locker_contract.functions.getUserAddressesList(stable_coin_address).call()
                 )
-            #print(user_addresses)
+            print(user_addresses)
             return user_addresses
         except Exception as e:
             logging.error(e)
 
-    def get_vesting_schedules(self):
+    def _calculate_vesting_schedules(self):
         # {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '...'}, ... }
         try:
             user_addresses = self.get_user_address_list()
             print(user_addresses)
-            user_vesting_schedule = defaultdict(dict)
-            for stable_coin_address, user_address_list in user_addresses.items():
-                for user_address in user_address_list:
+            for stable_coin_address, unique_user_address in user_addresses.items():
+                total_sum_for_a_coin = Counter() # {date1: sum1, date2: sum2, ... }
+                # Below always gives us a unique user address
+                for user_address in unique_user_address:
                     # returns a list [(startTime, endTime, quantity, vestedQuantity), (), ...]
                     #    struct VestingSchedule {
                     #         uint64 startTime;
@@ -125,22 +133,79 @@ class Baklava:
                     #         uint128 vestedQuantity;
                     #    }
                     schedules = self.USB_swap_locker_contract.functions.getVestingSchedules(stable_coin_address, user_address).call()
-                    schedules_updated = [
-                        [int(start_time), int(end_time), int(quantity), int(vested_quantity)]
-                        for start_time, end_time, quantity, vested_quantity in schedules
-                        if int(end_time) > time.time() and int(vested_quantity) == 0
-                    ] # for a specific user address and stable coin
-                    user_vesting_schedule[stable_coin_address][user_address] = schedules_updated
-            #print(user_vesting_schedule)
-            return user_vesting_schedule
+
+                    ########## TEST #############
+                    stable_coin_address = "stable_coin_1"
+                    user_address = "user_address_1"
+                    schedules = [
+                        (1, "1667316203", 10, 0),
+                        (1, "1667316204", 10, 0),
+                        (10, "1667402603", 100, 0),
+                        (100, "1667402604", 1000, 0),
+                        (1000, "1667575403", 10000, 0)
+                    ]
+                    ########## TEST #############
+
+                    self._process_vesting_schedules(total_sum_for_a_coin, stable_coin_address, user_address, schedules)
+                # {stable_coin1: {date1: sum1, date2: sum2, ... }, stable_coin2: {}}
+                self.__stable_coin_distribution_schedule[stable_coin_address] = total_sum_for_a_coin
         except Exception as e:
             logging.error(e)
 
-    def create_external_json_vesting_schedules(self):
-        user_vesting_schedule = self.get_vesting_schedules()
-        print(user_vesting_schedule)
-        with open("all_data.json", "w") as tvl_file:
-            json.dump(user_vesting_schedule, tvl_file, indent=4)
+    def _process_vesting_schedules(self, total_sum_for_a_coin, stable_coin_address, user_address, vesting_schedules):
+
+        if stable_coin_address not in self.__user_vesting_schedule:
+            self.__user_vesting_schedule[stable_coin_address] = dict()
+
+        self.__user_vesting_schedule[stable_coin_address][user_address] = Counter()
+
+        for start_time, end_time, quantity, vested_quantity in vesting_schedules:
+            start_time_number = int(start_time)
+            end_time_number = int(end_time)
+            quantity_number = int(quantity)
+            vested_quantity_number = int(vested_quantity)
+            if vested_quantity_number == 0:
+                end_time_formatted = datetime.utcfromtimestamp(end_time_number).strftime('%Y-%m-%d')
+                total_sum_for_a_coin[end_time_formatted] += quantity_number
+                self.__non_vested_funds_total[stable_coin_address] += quantity_number
+                self.__user_vesting_schedule[stable_coin_address][user_address][end_time_formatted] += quantity_number
+            elif quantity_number == vested_quantity_number:
+                self.__vested_funds_total[stable_coin_address] += vested_quantity_number
+
+    def calculate_all_vesting_schedule_data(self):
+
+        self.__non_vested_funds_total = Counter()
+        self.__vested_funds_total = Counter()
+        self.__stable_coin_distribution_schedule = dict()
+        self.__user_vesting_schedule = dict()
+        self._calculate_vesting_schedules()
+        self.time_last_refreshed = datetime.now()
+
+        print("self.__non_vested_funds_total:", self.__non_vested_funds_total)
+        print("self.__vested_funds_total:", self.__vested_funds_total)
+        print("self.__stable_coin_distribution_schedule:", self.__stable_coin_distribution_schedule)
+        print("self.__user_vesting_schedule", self.__user_vesting_schedule)
+
+        self.__write_all_data_to_external_json()
+
+    def __write_all_data_to_external_json(self):
+
+        with open("non_vested_funds_total.json", "w") as non_vested_funds:
+            json.dump(self.__non_vested_funds_total, non_vested_funds, indent=4)
+
+        with open("vested_funds_total.json", "w") as vested_funds:
+            json.dump(self.__vested_funds_total, vested_funds, indent=4)
+
+        with open("stable_coin_distribution.json", "w") as stable_coin_distribution:
+            json.dump(self.__stable_coin_distribution_schedule, stable_coin_distribution, indent=4)
+
+        with open("user_vesting_schedule.json", "w") as user_vesting_schedule:
+            json.dump(self.__user_vesting_schedule, user_vesting_schedule, indent=4)
+
+
+
+
+
 
 class MongoDB:
 
@@ -155,19 +220,47 @@ class MongoDB:
     def connect_to_local_mongo_server(self):
         pass
 
+try:
+    with open('user_token_vesting.json', 'r+') as f:
+        json_data = json.load(f)
+        json_data['a']['b'].append(200)
+        json_data['c'] = dict()
+        json_data['c']['e'] = 2
+        f.seek(0)
+        f.write(json.dumps(json_data))
+        f.truncate()
+except Exception as e:
+    logging.error(e)
+
+
 
 
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     baklava = Baklava()
-    print(baklava.create_external_json_vesting_schedules())
+    baklava.calculate_all_vesting_schedule_data()
     m = MongoDB()
     print(m.db)
     print(m.db_client.server_info())
 
+    from datetime import datetime
+
+    ts = 1666483200
+
+    # if you encounter a "year is out of range" error the timestamp
+    # may be in milliseconds, try `ts /= 1000` in that case
+    print(datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d'))
 
 
 
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/
+# {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '...'}, ... }
+
+    user_addresses = {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '2222'},
+                      '0xB7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'222222222', '222222233333'} }
+
+    for stable_coin_address, user_address_list in user_addresses.items():
+        print(stable_coin_address)
+        print(user_address_list)
