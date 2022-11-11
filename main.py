@@ -10,25 +10,31 @@ import schedule
 import requests
 import random
 from collections import defaultdict, Counter
+from pymongo.errors import ConnectionFailure
 from pymongo import MongoClient
 from datetime import datetime
+import urllib.parse
 
-#brew tap mongodb/brew
-#brew update
-#brew install mongodb-community@4.2
-#https://www.mongodb.com/docs/v4.2/tutorial/install-mongodb-on-os-x/
+# https://www.mongodb.com/languages/python
 
-# Creating a client
-client = MongoClient('localhost', 27020)
+# brew tap mongodb/brew
+# brew update
+# brew install mongodb-community@4.2
+# https://www.mongodb.com/docs/v4.2/tutorial/install-mongodb-on-os-x/
 
-# Creating a database name GFG
-db = client['GFG']
-print("Database is created !!")
-print(client.list_database_names())
+# # Creating a client
+# client = MongoClient('localhost', 27020)
+#
+# # Creating a database name GFG
+# db = client['GFG']
+# print("Database is created !!")
+# print(client.list_database_names())
+
+
+load_dotenv()
 
 
 class Baklava:
-
     AVALANCHE_RPC = "https://api.avax.network/ext/bc/C/rpc"
     CHAIN_ID = 43114
     # USB_LIQUIDITY_POOL_ADDRESS = "0xCC10F41Bf412839e651a32C42EFE497B9320fa76"
@@ -46,10 +52,10 @@ class Baklava:
         self.web3 = Web3(Web3.HTTPProvider(Baklava.AVALANCHE_RPC))
         self.USB_liquidity_pool_contract = self.create_USB_liquidity_pool_contract()
         self.USB_swap_locker_contract = self.create_USB_swap_locker_contract()
-        self.__non_vested_funds_total = Counter()
-        self.__vested_funds_total = Counter()
-        self.__stable_coin_distribution_schedule = dict()
-        self.__user_vesting_schedule = dict()
+        self._non_vested_funds_total = Counter()
+        self._vested_funds_total = Counter()
+        self._stable_coin_distribution_schedule = dict()
+        self._user_vesting_schedule = dict()
         self.time_last_refreshed = None
 
     def is_connected_to_avax_rpc(self):
@@ -70,7 +76,8 @@ class Baklava:
         try:
             usb_liquidity_json = open("./ABI/usb_liquidity_pool.json")
             usb_liquidity_json_loaded = json.load(usb_liquidity_json)
-            usb_liquidity_pool_contract = self.web3.eth.contract(Baklava.USB_LIQUIDITY_POOL_ADDRESS, abi=usb_liquidity_json_loaded)
+            usb_liquidity_pool_contract = self.web3.eth.contract(Baklava.USB_LIQUIDITY_POOL_ADDRESS,
+                                                                 abi=usb_liquidity_json_loaded)
             return usb_liquidity_pool_contract
         except Exception as e:
             print("Unable to access the USB_liquidity_pool_contract")
@@ -82,19 +89,21 @@ class Baklava:
         try:
             usb_swap_locker_json = open("./ABI/usb_swap_locker.json")
             usb_swap_locker_json_loaded = json.load(usb_swap_locker_json)
-            usb_swap_locker_contract = self.web3.eth.contract(Baklava.USB_SWAP_LOCKER_ADDRESS, abi=usb_swap_locker_json_loaded)
+            usb_swap_locker_contract = self.web3.eth.contract(Baklava.USB_SWAP_LOCKER_ADDRESS,
+                                                              abi=usb_swap_locker_json_loaded)
             return usb_swap_locker_contract
         except Exception as e:
             print("Unable to access the USB_swap_locker_contract")
             logging.error(e)
 
     def get_all_stable_coins(self):
-        #Master_Farm_Contract.functions.poolLength().call()
+        # Master_Farm_Contract.functions.poolLength().call()
         try:
             stable_coin_count = self.USB_liquidity_pool_contract.functions.getUSPeggedCoinsLength().call()
             stable_coin = dict()
             for stable_coin_index in range(stable_coin_count):
-                address_stable_coin, vesting_days, swap_enabled = self.USB_liquidity_pool_contract.functions.getUSPeggedCoin(stable_coin_index).call()
+                address_stable_coin, vesting_days, swap_enabled = self.USB_liquidity_pool_contract.functions.getUSPeggedCoin(
+                    stable_coin_index).call()
                 # (addrress of stable coin, 21 days, boolean)
                 stable_coin[address_stable_coin] = [vesting_days, swap_enabled]
             print(stable_coin)
@@ -103,7 +112,7 @@ class Baklava:
             logging.error(e)
 
     def get_user_address_list(self):
-        #Master_Farm_Contract.functions.poolLength().call()
+        # Master_Farm_Contract.functions.poolLength().call()
         try:
             all_stable_coins = self.get_all_stable_coins()
             user_addresses = dict()
@@ -122,7 +131,7 @@ class Baklava:
             user_addresses = self.get_user_address_list()
             print(user_addresses)
             for stable_coin_address, unique_user_address in user_addresses.items():
-                total_sum_for_a_coin = Counter() # {date1: sum1, date2: sum2, ... }
+                total_sum_for_a_coin = Counter()  # {date1: sum1, date2: sum2, ... }
                 # Below always gives us a unique user address
                 for user_address in unique_user_address:
                     # returns a list [(startTime, endTime, quantity, vestedQuantity), (), ...]
@@ -132,7 +141,8 @@ class Baklava:
                     #         uint128 quantity;
                     #         uint128 vestedQuantity;
                     #    }
-                    schedules = self.USB_swap_locker_contract.functions.getVestingSchedules(stable_coin_address, user_address).call()
+                    schedules = self.USB_swap_locker_contract.functions.getVestingSchedules(stable_coin_address,
+                                                                                            user_address).call()
 
                     ########## TEST #############
                     stable_coin_address = "stable_coin_1"
@@ -148,16 +158,16 @@ class Baklava:
 
                     self._process_vesting_schedules(total_sum_for_a_coin, stable_coin_address, user_address, schedules)
                 # {stable_coin1: {date1: sum1, date2: sum2, ... }, stable_coin2: {}}
-                self.__stable_coin_distribution_schedule[stable_coin_address] = total_sum_for_a_coin
+                self._stable_coin_distribution_schedule[stable_coin_address] = total_sum_for_a_coin
         except Exception as e:
             logging.error(e)
 
     def _process_vesting_schedules(self, total_sum_for_a_coin, stable_coin_address, user_address, vesting_schedules):
 
-        if stable_coin_address not in self.__user_vesting_schedule:
-            self.__user_vesting_schedule[stable_coin_address] = dict()
+        if stable_coin_address not in self._user_vesting_schedule:
+            self._user_vesting_schedule[stable_coin_address] = dict()
 
-        self.__user_vesting_schedule[stable_coin_address][user_address] = Counter()
+        self._user_vesting_schedule[stable_coin_address][user_address] = Counter()
 
         for start_time, end_time, quantity, vested_quantity in vesting_schedules:
             start_time_number = int(start_time)
@@ -167,58 +177,192 @@ class Baklava:
             if vested_quantity_number == 0:
                 end_time_formatted = datetime.utcfromtimestamp(end_time_number).strftime('%Y-%m-%d')
                 total_sum_for_a_coin[end_time_formatted] += quantity_number
-                self.__non_vested_funds_total[stable_coin_address] += quantity_number
-                self.__user_vesting_schedule[stable_coin_address][user_address][end_time_formatted] += quantity_number
+                self._non_vested_funds_total[stable_coin_address] += quantity_number
+                self._user_vesting_schedule[stable_coin_address][user_address][end_time_formatted] += quantity_number
             elif quantity_number == vested_quantity_number:
-                self.__vested_funds_total[stable_coin_address] += vested_quantity_number
+                self._vested_funds_total[stable_coin_address] += vested_quantity_number
 
     def calculate_all_vesting_schedule_data(self):
 
-        self.__non_vested_funds_total = Counter()
-        self.__vested_funds_total = Counter()
-        self.__stable_coin_distribution_schedule = dict()
-        self.__user_vesting_schedule = dict()
+        self._non_vested_funds_total = Counter()
+        self._vested_funds_total = Counter()
+        self._stable_coin_distribution_schedule = dict()
+        self._user_vesting_schedule = dict()
         self._calculate_vesting_schedules()
         self.time_last_refreshed = datetime.now()
 
-        print("self.__non_vested_funds_total:", self.__non_vested_funds_total)
-        print("self.__vested_funds_total:", self.__vested_funds_total)
-        print("self.__stable_coin_distribution_schedule:", self.__stable_coin_distribution_schedule)
-        print("self.__user_vesting_schedule", self.__user_vesting_schedule)
+        print("self.__non_vested_funds_total:", self._non_vested_funds_total)
+        print("self.__vested_funds_total:", self._vested_funds_total)
+        print("self.__stable_coin_distribution_schedule:", self._stable_coin_distribution_schedule)
+        print("self.__user_vesting_schedule", self._user_vesting_schedule)
 
-        self.__write_all_data_to_external_json()
+        self._write_all_data_to_external_json()
 
-    def __write_all_data_to_external_json(self):
+    def _write_all_data_to_external_json(self):
 
         with open("non_vested_funds_total.json", "w") as non_vested_funds:
-            json.dump(self.__non_vested_funds_total, non_vested_funds, indent=4)
+            json.dump(self._non_vested_funds_total, non_vested_funds, indent=4)
 
         with open("vested_funds_total.json", "w") as vested_funds:
-            json.dump(self.__vested_funds_total, vested_funds, indent=4)
+            json.dump(self._vested_funds_total, vested_funds, indent=4)
 
         with open("stable_coin_distribution.json", "w") as stable_coin_distribution:
-            json.dump(self.__stable_coin_distribution_schedule, stable_coin_distribution, indent=4)
+            json.dump(self._stable_coin_distribution_schedule, stable_coin_distribution, indent=4)
 
         with open("user_vesting_schedule.json", "w") as user_vesting_schedule:
-            json.dump(self.__user_vesting_schedule, user_vesting_schedule, indent=4)
-
-
-
-
+            json.dump(self._user_vesting_schedule, user_vesting_schedule, indent=4)
 
 
 class MongoDB:
+    USER_NAME = os.getenv("MONGODB_USERNAME")
+    PASSWORD = os.getenv("MONGODB_PASSWORD")
+    # below are the only collection names corresponding to the json file names
+    MONGO_DB_COLLECTIONS = {
+        "non_vested_funds_total",
+        "stable_coin_distribution",
+        "user_vesting_schedule",
+        "vested_funds_total"
+    }
 
     def __init__(self):
-        try:
-            self.db_client = pymongo.MongoClient("mongodb://localhost:2707/")
-            self.db = self.db_client["mydatabase"]
-            print(self.db_client.list_database_names())
-        except Exception as e:
-            logging.error(e)
+        self.connection_string = (
+                "mongodb+srv://" +
+                MongoDB.USER_NAME +
+                ":" +
+                urllib.parse.quote(MongoDB.PASSWORD) +
+                "@cluster0.9ibig9g.mongodb.net/myFirstDatabase?retryWrites=true&w=majority"
+        )
+        self.mongo_client = None
 
-    def connect_to_local_mongo_server(self):
-        pass
+    def create_mongo_client(self):
+        print("creating a mongo client")
+        try:
+            self.mongo_client = MongoClient(self.connection_string, tls=True, tlsAllowInvalidCertificates=True)
+            self.mongo_client.server_info()
+            print("Successfully created a mongo client")
+        except ConnectionFailure as err:
+            print("connection error has occurred")
+            logging.error(err)
+        except Exception as err:
+            print("error occurred whilst creating a mongo client")
+            logging.error(err)
+
+    def check_client_connection(self):
+        print("checking mongo client connection to the server")
+        try:
+            self.mongo_client.admin.command('ping')
+            print("no issue with mongo client connection")
+            return True
+        except AttributeError:
+            print("self.mongo_client is set to None")
+            return False
+        except ConnectionFailure:
+            print("Mongo client not connected to the server")
+            return False
+        except Exception as err:
+            print("error occurred whilst checking connection to mongo server")
+            logging.error(err)
+            return False
+
+    def connect_and_get_database(self, database_name="Baklava"):
+        while not self.check_client_connection():
+            self.create_mongo_client()
+            time.sleep(10)
+
+        print("mongo client successfully created")
+
+        try:
+            database = self.mongo_client[database_name]  # create/get the "Baklava" database
+            print("database successfully accessed")
+            return database
+        except ConnectionFailure as err:
+            logging.error(err)
+        except Exception as err:
+            print(f"could not get the database {database_name}")
+            logging.error(err)
+
+    def update_database_add_collection(self, collection_name):
+
+        try:
+            database_instance = self.connect_and_get_database()  # create and get the database
+            collection = database_instance[collection_name]  # create collection named "....."
+            with open(f"{collection_name}.json") as collection_data:
+                collection_json_data = json.load(collection_data)
+                collection.delete_many({})
+                collection.insert_one(collection_json_data)
+        except Exception as err:
+            print(f"Was not able to update the mongodb database - collection: {collection_name}")
+            logging.error(err)
+
+    def update_database_add_all_collections(self):
+
+        try:
+            database_instance = self.connect_and_get_database()  # create and get the database
+            for collection_name in MongoDB.MONGO_DB_COLLECTIONS:
+                collection = database_instance[collection_name]  # create collection named "....."
+                with open(f"{collection_name}.json") as collection_data:
+                    collection_json_data = json.load(collection_data)
+                    collection.delete_many({})
+                    collection.insert_one(collection_json_data)
+        except Exception as err:
+            print(f"Was not able to update the mongodb database - add all collections")
+            logging.error(err)
+
+    def update_database_delete_collection(self, collection_name):
+
+        try:
+            database_instance = self.connect_and_get_database()  # create and get the database
+            collection = database_instance[collection_name]
+            collection.drop()
+        except Exception as err:
+            print(f"Was not able to update the mongodb database - drop collection {collection_name}")
+            logging.error(err)
+
+    def update_database_delete_all_collections(self):
+        try:
+            database_instance = self.connect_and_get_database()  # create and get the database
+            for collection_name in MongoDB.MONGO_DB_COLLECTIONS:
+                collection = database_instance[collection_name]  # create collection named "....."
+                collection.drop()
+        except Exception as err:
+            print(f"Was not able to update the mongodb database - delete all collections")
+            logging.error(err)
+
+    import pymongo
+
+    myclient = pymongo.MongoClient("mongodb://localhost:27017/")
+    mydb = myclient["mydatabase"]
+    mycol = mydb["customers"]
+
+    mycol.drop()
+
+    # def update_database_add_collection_stable_coin_distribution(self):
+    #     database_instance = self.connect_and_get_database()  # create and get the database
+    #     collection = database_instance["stable_coin_distribution"]  # create collection named "....."
+    #
+    #     with open("stable_coin_distribution.json") as stable_coin_distribution:
+    #         stable_coin_distribution_data = json.load(stable_coin_distribution)
+    #         collection.delete_many({})
+    #         collection.insert_one(stable_coin_distribution_data)
+    #
+    # def update_database_add_collection_user_vesting_schedule(self):
+    #     database_instance = self.connect_and_get_database()  # create and get the database
+    #     collection = database_instance["user_vesting_schedule"]  # create collection named "....."
+    #
+    #     with open("user_vesting_schedule.json") as user_vesting_schedule:
+    #         user_vesting_schedule_data = json.load(user_vesting_schedule)
+    #         collection.delete_many({})
+    #         collection.insert_one(user_vesting_schedule_data)
+    #
+    # def update_database_add_collection_vested_funds_total(self):
+    #     database_instance = self.connect_and_get_database()  # create and get the database
+    #     collection = database_instance["vested_funds_total"]  # create collection named "....."
+    #
+    #     with open("vested_funds_total.json") as vested_funds_total:
+    #         vested_funds_total_data = json.load(vested_funds_total)
+    #         collection.delete_many({})
+    #         collection.insert_one(vested_funds_total_data)
+
 
 try:
     with open('user_token_vesting.json', 'r+') as f:
@@ -232,17 +376,17 @@ try:
 except Exception as e:
     logging.error(e)
 
-
-
-
-
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     baklava = Baklava()
     baklava.calculate_all_vesting_schedule_data()
     m = MongoDB()
-    print(m.db)
-    print(m.db_client.server_info())
+    db = m.connect_and_get_database()
+    collection_name = db["non_vested_funds_total"]
+    item_details = collection_name.find()
+    for item in item_details:
+        # This does not give a very readable output
+        print(item)
 
     from datetime import datetime
 
@@ -252,14 +396,12 @@ if __name__ == '__main__':
     # may be in milliseconds, try `ts /= 1000` in that case
     print(datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d'))
 
+    # See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    # {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '...'}, ... }
 
-
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
-# {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '...'}, ... }
-
-    user_addresses = {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '2222'},
-                      '0xB7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'222222222', '222222233333'} }
+    user_addresses = {
+        '0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '2222'},
+        '0xB7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'222222222', '222222233333'}}
 
     for stable_coin_address, user_address_list in user_addresses.items():
         print(stable_coin_address)
