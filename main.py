@@ -38,9 +38,9 @@ class Baklava:
     AVALANCHE_RPC = "https://api.avax.network/ext/bc/C/rpc"
     CHAIN_ID = 43114
     # USB_LIQUIDITY_POOL_ADDRESS = "0xCC10F41Bf412839e651a32C42EFE497B9320fa76"
-    USB_LIQUIDITY_POOL_ADDRESS = "0x1578D79ab9777f8f1B9A5fE8abd593835492f21A"
+    USB_LIQUIDITY_POOL_ADDRESS = "0x1578D79ab9777f8f1B9A5fE8abd593835492f21A" # proxy
     # USB_SWAP_LOCKER_ADDRESS = "0x4e5138EbD881608EcB9769e5be61F0C6155417D7"
-    USB_SWAP_LOCKER_ADDRESS = "0xD2c6e7892F3131e22d05E37E9B22bA79f8C74bA0"
+    USB_SWAP_LOCKER_ADDRESS = "0xD2c6e7892F3131e22d05E37E9B22bA79f8C74bA0" # proxy
 
     STABLE_COIN_ADDRESSES = {
         "USB": "0xc3fdd1652dD28b0b1D3401CC6fa50B4d8C45e7Ad",
@@ -59,13 +59,14 @@ class Baklava:
         self.time_last_refreshed = None
         # count of the tokens in $
 
-        self.USDC_token_contract = self.create_USDC_token_contract()
-        self.USDC_E_token_contract = self.create_USDC_E_token_contract()
-        self._USDC_E_reserve = {Baklava.USB_LIQUIDITY_POOL_ADDRESS: 0, Baklava.USB_SWAP_LOCKER_ADDRESS: 0}
-        self._USDC_reserve = {Baklava.USB_LIQUIDITY_POOL_ADDRESS: 0, Baklava.USB_SWAP_LOCKER_ADDRESS: 0}
-        self._update_stable_coin_reserves()
-        print("self._USDC_E_reserve", self._USDC_E_reserve)
-        print("self._USDC_reserve", self._USDC_reserve)
+        self._USDC_token_contract = self.create_USDC_token_contract()
+        self._USDC_E_token_contract = self.create_USDC_E_token_contract()
+        self.USDC_E_reserve = {Baklava.USB_LIQUIDITY_POOL_ADDRESS: 0, Baklava.USB_SWAP_LOCKER_ADDRESS: 0}
+        self.USDC_reserve = {Baklava.USB_LIQUIDITY_POOL_ADDRESS: 0, Baklava.USB_SWAP_LOCKER_ADDRESS: 0}
+        self.stable_coin_reserve = {"USDC.e": self.USDC_E_reserve, "USDC": self.USDC_reserve} # US dollars
+        self.update_stable_coin_reserves()
+        print("self._USDC_E_reserve", self.USDC_E_reserve)
+        print("self._USDC_reserve", self.USDC_reserve)
 
     def is_connected_to_avax_rpc(self):
         return self.web3.isConnected()
@@ -176,9 +177,10 @@ class Baklava:
                     #         uint128 quantity;
                     #         uint128 vestedQuantity;
                     #    }
-                    schedules = self.USB_swap_locker_contract.functions.getVestingSchedules(stable_coin_address,
-                                                                                            user_address).call()
-                    print(schedules)
+                    print("stable_coin_address", stable_coin_address)
+                    print('user_address', user_address)
+                    schedules = self.USB_swap_locker_contract.functions.getVestingSchedules(user_address, stable_coin_address).call()
+                    print("VestingSchedule", schedules)
 
                     ########## TEST #############
                     # stable_coin_address = "stable_coin_1"
@@ -193,7 +195,6 @@ class Baklava:
                     ########## TEST #############
 
                     self._process_vesting_schedules(total_sum_for_a_coin, stable_coin_address, user_address, schedules)
-                # {stable_coin1: {date1: sum1, date2: sum2, ... }, stable_coin2: {}}
                 self._stable_coin_distribution_schedule[stable_coin_address] = total_sum_for_a_coin
         except Exception as e:
             logging.error(e)
@@ -206,17 +207,17 @@ class Baklava:
         self._user_vesting_schedule[stable_coin_address][user_address] = Counter()
 
         for start_time, end_time, quantity, vested_quantity in vesting_schedules:
-            start_time_number = int(start_time)
-            end_time_number = int(end_time)
-            quantity_number = int(quantity)
-            vested_quantity_number = int(vested_quantity)
-            if vested_quantity_number == 0:
-                end_time_formatted = datetime.utcfromtimestamp(end_time_number).strftime('%Y-%m-%d')
-                total_sum_for_a_coin[end_time_formatted] += quantity_number
-                self._non_vested_funds_total[stable_coin_address] += quantity_number
-                self._user_vesting_schedule[stable_coin_address][user_address][end_time_formatted] += quantity_number
-            elif quantity_number == vested_quantity_number:
-                self._vested_funds_total[stable_coin_address] += vested_quantity_number
+            # start_time_number = int(start_time)
+            # end_time_number = int(end_time)
+            # quantity_number = int(quantity)
+            # vested_quantity_number = int(vested_quantity)
+            if vested_quantity == 0:
+                end_time_formatted = datetime.utcfromtimestamp(end_time).strftime('%Y-%m-%d')
+                total_sum_for_a_coin[end_time_formatted] += quantity
+                self._non_vested_funds_total[stable_coin_address] += quantity
+                self._user_vesting_schedule[stable_coin_address][user_address][end_time_formatted] += quantity
+            elif quantity == vested_quantity:
+                self._vested_funds_total[stable_coin_address] += vested_quantity
 
     def calculate_all_vesting_schedule_data(self):
 
@@ -225,6 +226,7 @@ class Baklava:
         self._stable_coin_distribution_schedule = dict()
         self._user_vesting_schedule = dict()
         self._calculate_vesting_schedules()
+        self.update_stable_coin_reserves()
         self.time_last_refreshed = datetime.now()
 
         print("self.__non_vested_funds_total:", self._non_vested_funds_total)
@@ -236,7 +238,10 @@ class Baklava:
 
     def _write_all_data_to_external_json(self):
 
-        """Overwrites everything in the file due to "w" in the open command"""
+        """Overwrites everything in the file due to "w" in the open command
+        Also important to note that the name of the json corresponds to the name
+        of the collections in the MongoDB"""
+
 
         with open("non_vested_funds_total.json", "w") as non_vested_funds:
             json.dump(self._non_vested_funds_total, non_vested_funds, indent=4)
@@ -250,18 +255,23 @@ class Baklava:
         with open("user_vesting_schedule.json", "w") as user_vesting_schedule:
             json.dump(self._user_vesting_schedule, user_vesting_schedule, indent=4)
 
-    def _update_stable_coin_reserves(self):
+        with open("stable_coin_reserve.json", "w") as stable_coin_reserve:
+            json.dump(self.stable_coin_reserve, stable_coin_reserve, indent=4)
+
+    def update_stable_coin_reserves(self):
+        """This calculates the amount of USDC/USDC.e tokens in the smart contracts"""
         if not self.is_connected_to_avax_rpc:
             self.connect_to_avax_rpc()
         try:
-            USDC_balance_USB_pool = self.USDC_token_contract.functions.balanceOf(Baklava.USB_LIQUIDITY_POOL_ADDRESS).call()
-            USDC_balance_swap_pool = self.USDC_token_contract.functions.balanceOf(Baklava.USB_SWAP_LOCKER_ADDRESS).call()
-            USDC_E_balance_USB_pool = self.USDC_E_token_contract.functions.balanceOf(Baklava.USB_LIQUIDITY_POOL_ADDRESS).call()
-            USDC_E_balance_swap_pool = self.USDC_E_token_contract.functions.balanceOf(Baklava.USB_SWAP_LOCKER_ADDRESS).call()
-            self._USDC_reserve[Baklava.USB_LIQUIDITY_POOL_ADDRESS] = USDC_balance_USB_pool / 10**6
-            self._USDC_reserve[Baklava.USB_SWAP_LOCKER_ADDRESS] = USDC_balance_swap_pool / 10**6
-            self._USDC_E_reserve[Baklava.USB_LIQUIDITY_POOL_ADDRESS] = USDC_E_balance_USB_pool / 10**6
-            self._USDC_E_reserve[Baklava.USB_SWAP_LOCKER_ADDRESS] = USDC_E_balance_swap_pool / 10**6
+            USDC_balance_USB_pool = self._USDC_token_contract.functions.balanceOf(Baklava.USB_LIQUIDITY_POOL_ADDRESS).call()
+            USDC_balance_swap_pool = self._USDC_token_contract.functions.balanceOf(Baklava.USB_SWAP_LOCKER_ADDRESS).call()
+            USDC_E_balance_USB_pool = self._USDC_E_token_contract.functions.balanceOf(Baklava.USB_LIQUIDITY_POOL_ADDRESS).call()
+            USDC_E_balance_swap_pool = self._USDC_E_token_contract.functions.balanceOf(Baklava.USB_SWAP_LOCKER_ADDRESS).call()
+            self.USDC_reserve[Baklava.USB_LIQUIDITY_POOL_ADDRESS] = USDC_balance_USB_pool / 10**6
+            self.USDC_reserve[Baklava.USB_SWAP_LOCKER_ADDRESS] = USDC_balance_swap_pool / 10**6
+            self.USDC_E_reserve[Baklava.USB_LIQUIDITY_POOL_ADDRESS] = USDC_E_balance_USB_pool / 10**6
+            self.USDC_E_reserve[Baklava.USB_SWAP_LOCKER_ADDRESS] = USDC_E_balance_swap_pool / 10**6
+            self.stable_coin_reserve = {"USDC.e": self.USDC_E_reserve, "USDC": self.USDC_reserve}
 
         except Exception as e:
             print("Unable to calculate the balance of the stable coins")
@@ -275,7 +285,8 @@ class MongoDB:
         "non_vested_funds_total",
         "stable_coin_distribution",
         "user_vesting_schedule",
-        "vested_funds_total"
+        "vested_funds_total",
+        "stable_coin_reserve"
     }
 
     def __init__(self):
@@ -360,7 +371,7 @@ class MongoDB:
         try:
             database_instance = self.connect_and_get_database()  # create and get the database
             for collection_name in MongoDB.MONGO_DB_COLLECTIONS:
-                collection = database_instance[collection_name]  # create collection named "....."
+                collection = database_instance[collection_name]  # get collection named "....."
                 with open(f"{collection_name}.json") as collection_data:
                     collection_json_data = json.load(collection_data)
                     collection.delete_many({})
@@ -441,9 +452,8 @@ except Exception as e:
 if __name__ == '__main__':
     baklava = Baklava()
     baklava.calculate_all_vesting_schedule_data()
-    baklava._update_stable_coin_reserves()
-    baklava._USDC_E_reserve
-    baklava._USDC_reserve
+
+
     m = MongoDB()
     db = m.connect_and_get_database()
     m.update_database_add_all_collections()
