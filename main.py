@@ -212,6 +212,7 @@ class Baklava:
             # quantity_number = int(quantity)
             # vested_quantity_number = int(vested_quantity)
             if vested_quantity == 0:
+                # this means that for this vesting schdule, the user has not collected the money, yet.
                 end_time_formatted = datetime.utcfromtimestamp(end_time).strftime('%Y-%m-%d')
                 total_sum_for_a_coin[end_time_formatted] += quantity
                 self._non_vested_funds_total[stable_coin_address] += quantity
@@ -242,21 +243,51 @@ class Baklava:
         Also important to note that the name of the json corresponds to the name
         of the collections in the MongoDB"""
 
+        try:
+            with open("non_vested_funds_total.json", "w") as non_vested_funds:
+                json.dump(self._non_vested_funds_total, non_vested_funds, indent=4)
 
-        with open("non_vested_funds_total.json", "w") as non_vested_funds:
-            json.dump(self._non_vested_funds_total, non_vested_funds, indent=4)
+            with open("vested_funds_total.json", "w") as vested_funds:
+                json.dump(self._vested_funds_total, vested_funds, indent=4)
 
-        with open("vested_funds_total.json", "w") as vested_funds:
-            json.dump(self._vested_funds_total, vested_funds, indent=4)
+            with open("stable_coin_distribution.json", "w") as stable_coin_distribution:
 
-        with open("stable_coin_distribution.json", "w") as stable_coin_distribution:
-            json.dump(self._stable_coin_distribution_schedule, stable_coin_distribution, indent=4)
+                temp_stable_coin_distribution_schedule = dict()
+                temp_stable_coin_distribution_schedule_accumulative = defaultdict(dict)
 
-        with open("user_vesting_schedule.json", "w") as user_vesting_schedule:
-            json.dump(self._user_vesting_schedule, user_vesting_schedule, indent=4)
+                # [[token_address, [[date, money], [date, money]]], [token_address, [[]]]]
 
-        with open("stable_coin_reserve.json", "w") as stable_coin_reserve:
-            json.dump(self.stable_coin_reserve, stable_coin_reserve, indent=4)
+                for token_address, data in self._stable_coin_distribution_schedule.items():
+                    accumulative_sum = 0
+                    temp_list = []
+                    for date, value in sorted(data.items()):
+                        accumulative_sum += value
+                        temp_list.append([date, value])
+                        temp_stable_coin_distribution_schedule_accumulative[token_address][date] = accumulative_sum
+                    temp_stable_coin_distribution_schedule[token_address] = temp_list
+
+                # temp_stable_coin_distribution_schedule = {
+                #     token_address: [[date, value] for date, value in sorted(data.items())]
+                #     for token_address, data in self._stable_coin_distribution_schedule.items()
+                # }
+                print("temp_stable_coin_distribution_schedule-ik:", temp_stable_coin_distribution_schedule)
+                json.dump(
+                    temp_stable_coin_distribution_schedule |
+                    {"original": self._stable_coin_distribution_schedule} |
+                    {"accumulative": temp_stable_coin_distribution_schedule_accumulative},
+                    stable_coin_distribution,
+                    indent=4
+                )
+
+            with open("user_vesting_schedule.json", "w") as user_vesting_schedule:
+                json.dump(self._user_vesting_schedule, user_vesting_schedule, indent=4)
+
+            with open("stable_coin_reserve.json", "w") as stable_coin_reserve:
+                json.dump(self.stable_coin_reserve, stable_coin_reserve, indent=4)
+
+        except EnvironmentError as error:  # parent of IOError, OSError *and* WindowsError where available
+            logging.error(error)
+
 
     def update_stable_coin_reserves(self):
         """This calculates the amount of USDC/USDC.e tokens in the smart contracts"""
@@ -452,11 +483,18 @@ except Exception as e:
 if __name__ == '__main__':
     baklava = Baklava()
     baklava.calculate_all_vesting_schedule_data()
-
-
+    time.sleep(60)
     m = MongoDB()
     db = m.connect_and_get_database()
     m.update_database_add_all_collections()
+
+    while True:
+        print('updating data')
+        baklava.calculate_all_vesting_schedule_data()
+        time.sleep(60)
+        print('updating mongo')
+        m.update_database_add_all_collections()
+        time.sleep(60)
 
 
 
