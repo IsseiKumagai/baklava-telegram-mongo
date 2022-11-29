@@ -12,8 +12,9 @@ import random
 from collections import defaultdict, Counter
 from pymongo.errors import ConnectionFailure
 from pymongo import MongoClient
-from datetime import datetime
+import datetime
 import urllib.parse
+import notify_revised
 
 # https://www.mongodb.com/languages/python
 
@@ -213,7 +214,7 @@ class Baklava:
             # vested_quantity_number = int(vested_quantity)
             if vested_quantity == 0:
                 # this means that for this vesting schdule, the user has not collected the money, yet.
-                end_time_formatted = datetime.utcfromtimestamp(end_time).strftime('%Y-%m-%d')
+                end_time_formatted = datetime.datetime.utcfromtimestamp(end_time).strftime('%Y-%m-%d')
                 total_sum_for_a_coin[end_time_formatted] += quantity
                 self._non_vested_funds_total[stable_coin_address] += quantity
                 self._user_vesting_schedule[stable_coin_address][user_address][end_time_formatted] += quantity
@@ -228,7 +229,7 @@ class Baklava:
         self._user_vesting_schedule = dict()
         self._calculate_vesting_schedules()
         self.update_stable_coin_reserves()
-        self.time_last_refreshed = datetime.now()
+        self.time_last_refreshed = datetime.datetime.now()
 
         print("self.__non_vested_funds_total:", self._non_vested_funds_total)
         print("self.__vested_funds_total:", self._vested_funds_total)
@@ -438,64 +439,32 @@ class MongoDB:
             logging.error(err)
 
 
+date_ran = set()
 
-    # def update_database_add_collection_stable_coin_distribution(self):
-    #     database_instance = self.connect_and_get_database()  # create and get the database
-    #     collection = database_instance["stable_coin_distribution"]  # create collection named "....."
-    #
-    #     with open("stable_coin_distribution.json") as stable_coin_distribution:
-    #         stable_coin_distribution_data = json.load(stable_coin_distribution)
-    #         collection.delete_many({})
-    #         collection.insert_one(stable_coin_distribution_data)
-    #
-    # def update_database_add_collection_user_vesting_schedule(self):
-    #     database_instance = self.connect_and_get_database()  # create and get the database
-    #     collection = database_instance["user_vesting_schedule"]  # create collection named "....."
-    #
-    #     with open("user_vesting_schedule.json") as user_vesting_schedule:
-    #         user_vesting_schedule_data = json.load(user_vesting_schedule)
-    #         collection.delete_many({})
-    #         collection.insert_one(user_vesting_schedule_data)
-    #
-    # def update_database_add_collection_vested_funds_total(self):
-    #     database_instance = self.connect_and_get_database()  # create and get the database
-    #     collection = database_instance["vested_funds_total"]  # create collection named "....."
-    #
-    #     with open("vested_funds_total.json") as vested_funds_total:
-    #         vested_funds_total_data = json.load(vested_funds_total)
-    #         collection.delete_many({})
-    #         collection.insert_one(vested_funds_total_data)
-
-
-try:
-    with open('user_token_vesting.json', 'r+') as f:
-        json_data = json.load(f)
-        json_data['a']['b'].append(200)
-        json_data['c'] = dict()
-        json_data['c']['e'] = 2
-        f.seek(0)
-        f.write(json.dumps(json_data))
-        f.truncate()
-except Exception as e:
-    logging.error(e)
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
+def run_all_functions():
+    """ Runs all functions - MongoDB, Smart contract data collecting (json files) and Telegram Bot notification"""
     baklava = Baklava()
     baklava.calculate_all_vesting_schedule_data()
     time.sleep(60)
+    today_date = str(datetime.datetime.today().strftime('%Y-%m-%d'))
+    hours_past_midnight = datetime.datetime.today().hour
+    if today_date not in date_ran and hours_past_midnight >= 10:
+        print("Creating and preparing to send a message to the Telegram")
+        notify_revised.create_message_and_send_to_telegram()
+        date_ran.add(today_date)
+        print("Finished sending message to the Telegram")
     m = MongoDB()
-    db = m.connect_and_get_database()
     m.update_database_add_all_collections()
 
+
+def schedule_update():
+    schedule.every(10).minutes.do(run_all_functions)
+
     while True:
-        print('updating data')
-        baklava.calculate_all_vesting_schedule_data()
-        time.sleep(60)
-        print('updating mongo')
-        m.update_database_add_all_collections()
-        time.sleep(60)
+        schedule.run_pending()
+        time.sleep(1)
 
 
-
-
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    schedule_update()
