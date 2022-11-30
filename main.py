@@ -273,9 +273,11 @@ class Baklava:
                 # }
                 print("temp_stable_coin_distribution_schedule-ik:", temp_stable_coin_distribution_schedule)
                 json.dump(
-                    temp_stable_coin_distribution_schedule |
-                    {"original": self._stable_coin_distribution_schedule} |
-                    {"accumulative": temp_stable_coin_distribution_schedule_accumulative},
+                    {
+                        **temp_stable_coin_distribution_schedule,
+                        **{"original": self._stable_coin_distribution_schedule},
+                        **{"accumulative": temp_stable_coin_distribution_schedule_accumulative}
+                     },
                     stable_coin_distribution,
                     indent=4
                 )

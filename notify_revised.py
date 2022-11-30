@@ -19,7 +19,6 @@ def send_to_telegram(message):
     except Exception as e:
         print(e)
 
-
 def obtain_data_from_json_files():
     try:
         stable_coin_reserve = open("stable_coin_reserve.json")
