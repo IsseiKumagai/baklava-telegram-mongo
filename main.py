@@ -166,7 +166,7 @@ class Baklava:
         # {'0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664': {'0x4e3DA49cc22694D53F4a71e4d4BfdFB2BF272887', '...'}, ... }
         try:
             user_addresses = self.get_user_address_list()
-            print(user_addresses)
+            print("user_addresses 20221130", user_addresses)
             for stable_coin_address, unique_user_address in user_addresses.items():
                 total_sum_for_a_coin = Counter()  # {date1: sum1, date2: sum2, ... }
                 # Below always gives us a unique user address
@@ -437,7 +437,6 @@ class MongoDB:
         except Exception as err:
             print(f"Was not able to update the mongodb database - delete all collections")
             logging.error(err)
-
 
 date_ran = set()
 
