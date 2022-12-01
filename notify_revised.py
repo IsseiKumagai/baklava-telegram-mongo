@@ -9,7 +9,7 @@ STABLE_COIN_ADDRESSES = {
     "USDC": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
 }
 apiToken = "5760680368:AAHLf-ZTdshgYLExYgiqrx60altD02k11Kg"
-chatID = "-1001814484085" #"5331052190"
+chatID = "-1001814484085"  #"5331052190"
 apiURL = f'https://api.telegram.org/bot{apiToken}/sendMessage'
 
 def send_to_telegram(message):
