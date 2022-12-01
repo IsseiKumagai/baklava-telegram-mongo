@@ -9,7 +9,7 @@ STABLE_COIN_ADDRESSES = {
     "USDC": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
 }
 apiToken = "5760680368:AAHLf-ZTdshgYLExYgiqrx60altD02k11Kg"
-chatID = "5331052190"
+chatID = "5331052190" #"-1001814484085"
 apiURL = f'https://api.telegram.org/bot{apiToken}/sendMessage'
 
 def send_to_telegram(message):
@@ -57,9 +57,8 @@ def create_message_to_send():
                 # OR {} is returned
                 money_in_the_contract = total_sum_stable_coin[stable_coin_name]
                 if end_date in amount_to_distribute_for_date:
-                    total_money_left = money_in_the_contract - amount_to_distribute_for_date[end_date]
+                    total_money_left = money_in_the_contract - ((amount_to_distribute_for_date[end_date]) / 10**6)
                     if total_money_left < 0:
-                        # 1 % more than required to count for floating numbers
                         message_to_send += f"{stable_coin_name}: Please deposit => ${math.ceil((total_money_left * -1) + 1)} \u274C \n"
                     else:
                         message_to_send += f"{stable_coin_name}: Funds remaining => ${math.ceil(total_money_left)} \u2705 \n"
@@ -76,7 +75,7 @@ def create_message_to_send():
                             index_date -= 1
                             date_in_consideration = distribution_date_amount[index_date][0]
                             # due to 6 decimals stable coin
-                            total_money_left = money_in_the_contract - (amount_to_distribute_for_date[date_in_consideration]) / 10**6
+                            total_money_left = money_in_the_contract - ((amount_to_distribute_for_date[date_in_consideration]) / 10**6)
                             if total_money_left < 0:
                                 # 1 added because of floating numbers
                                 message_to_send += f"{stable_coin_name}: Please deposit => ${math.ceil((total_money_left * -1) + 1)} \u274C \n"
@@ -103,4 +102,4 @@ def create_message_and_send_to_telegram():
 
 
 if __name__ == '__main__':
-    pass
+    create_message_and_send_to_telegram()

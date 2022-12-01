@@ -36,6 +36,7 @@ load_dotenv()
 
 
 class Baklava:
+
     AVALANCHE_RPC = "https://api.avax.network/ext/bc/C/rpc"
     CHAIN_ID = 43114
     # USB_LIQUIDITY_POOL_ADDRESS = "0xCC10F41Bf412839e651a32C42EFE497B9320fa76"
